@@ -23,8 +23,7 @@ struct CollisionRecord {
 };
 
 /*
-    Return the index of the entity in "entities" that the given ray intersects first, -1 if there are no intersections.
-    If the optional last argument is provided, the given index into "entities" will be ignored during the search.
+    Search through spheres and rectangles for an entity that the given ray intersects.
 */
 __device__ CollisionRecord NearestIntersection(
     Sphere* spheres,
@@ -86,8 +85,6 @@ __device__ CollisionRecord NearestIntersection(
 
 /*
     Find the lighting value at a point.
-    The index of the lit entity is provided so that it can be ignored when checking paths between it and the lights. Since the point of incidence
-    is itself on the lit_entity, it could possibly be considered to intersect the latter. We avoid this by ignoring the lit_entity_index.
 */
 __device__ double RayLight(
     Sphere* spheres,
@@ -105,6 +102,7 @@ __device__ double RayLight(
     Vec3 intersection;
     double surface_angle_from_light;
 
+    // Slightly exaggerate the origin of the light ray, so that it does not intersect with the entity we are trying to find the light value for.
     light_ray.origin = incidence * 0.05;
 
     // Check each light to see if there is an uninterrupted path between it and the entity
