@@ -17,8 +17,7 @@ __device__ inline bool RectangleRayIntersect(const Rectangle& rectangle, const R
     /*
     * First find the intersection between the ray and the plane the rectangle exists on.
     */
-    double dividend = (rectangle.a - ray.origin).DotProduct(rectangle.normal);
-    double divisor = ray.direction.DotProduct(rectangle.normal);
+    float divisor = ray.direction.DotProduct(rectangle.normal);
 
     // If the ray and plane are parallel
     if (fabs(divisor) < EPSILON)
@@ -26,7 +25,8 @@ __device__ inline bool RectangleRayIntersect(const Rectangle& rectangle, const R
         return false;
     }
 
-    double distance = dividend / divisor;
+    float dividend = (rectangle.a - ray.origin).DotProduct(rectangle.normal);
+    float distance = dividend / divisor;
 
     // If the point of intersection is "behind" the ray
     if (distance < 0.0)
@@ -41,10 +41,10 @@ __device__ inline bool RectangleRayIntersect(const Rectangle& rectangle, const R
     Vec3 AC = rectangle.a - rectangle.c;
     Vec3 AI = rectangle.a - intersection;
 
-    double ABAB_dot = AB.DotProduct(AB);
-    double ACAC_dot = AC.DotProduct(AC);
-    double AIAB_dot = AI.DotProduct(AB);
-    double AIAC_dot = AI.DotProduct(AC);
+    float ABAB_dot = AB.DotProduct(AB);
+    float ACAC_dot = AC.DotProduct(AC);
+    float AIAB_dot = AI.DotProduct(AB);
+    float AIAC_dot = AI.DotProduct(AC);
 
     return(AIAB_dot >= 0.0 &&
         AIAC_dot >= 0.0 &&

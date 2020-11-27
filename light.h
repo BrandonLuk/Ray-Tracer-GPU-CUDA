@@ -5,5 +5,5 @@
 struct Light
 {
 	Vec3 origin = { 0.0 , 0.0, 0.0 };
-	double intensity = 1.0;
+	float intensity = 1.0;
 };

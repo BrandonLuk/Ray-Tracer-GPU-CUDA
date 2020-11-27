@@ -1,3 +1,10 @@
+/*
+* A CUDA powered 3D real-time ray tracer.
+* Windowing and graphics done with GLFW and OpenGL.
+*
+* Brandon Luk
+*/
+
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 
@@ -32,7 +39,7 @@ std::chrono::duration<double> elapsed;
 double cursor_xpos_delta;
 double cursor_ypos_delta;
 int cursor_horizontal_inversion = -1;
-int cursor_vertical_inversion   = -1;
+int cursor_vertical_inversion = -1;
 
 ///////////////////////////////////////////////
 // OpenGL/Cuda rendering
@@ -41,7 +48,6 @@ int cursor_vertical_inversion   = -1;
 GLuint gl_texturePtr;
 GLuint gl_pixelBufferObject;
 cudaGraphicsResource* cgr;
-uchar4* h_textureBufData;
 uchar4* d_textureBufData;
 
 ///////////////////////////////////////////////
@@ -52,6 +58,9 @@ bool w_key_pressed = false;
 bool a_key_pressed = false;
 bool s_key_pressed = false;
 bool d_key_pressed = false;
+bool e_key_pressed = false;
+bool spacebar_key_pressed = false;
+bool shift_key_pressed = false;
 
 ///////////////////////////////////////////////
 // GLFW callbacks
@@ -59,28 +68,25 @@ bool d_key_pressed = false;
 
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
-    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
-        quit_program = true;
+    auto key_action_assignment = [&action](bool& flag) {
+        if (action == GLFW_PRESS)
+            flag = true;
+        else if (action == GLFW_RELEASE)
+            flag = false;
+    };
 
-    else if (key == GLFW_KEY_W && action == GLFW_PRESS)
-        w_key_pressed = true;
-    else if (key == GLFW_KEY_W && action == GLFW_RELEASE)
-        w_key_pressed = false;
-
-    else if (key == GLFW_KEY_A && action == GLFW_PRESS)
-        a_key_pressed = true;
-    else if (key == GLFW_KEY_A && action == GLFW_RELEASE)
-        a_key_pressed = false;
-
-    else if (key == GLFW_KEY_S && action == GLFW_PRESS)
-        s_key_pressed = true;
-    else if (key == GLFW_KEY_S && action == GLFW_RELEASE)
-        s_key_pressed = false;
-
-    else if (key == GLFW_KEY_D && action == GLFW_PRESS)
-        d_key_pressed = true;
-    else if (key == GLFW_KEY_D && action == GLFW_RELEASE)
-        d_key_pressed = false;
+    switch (key)
+    {
+    case GLFW_KEY_ESCAPE: key_action_assignment(quit_program);          break;
+    case GLFW_KEY_W: key_action_assignment(w_key_pressed);              break;
+    case GLFW_KEY_A: key_action_assignment(a_key_pressed);              break;
+    case GLFW_KEY_S: key_action_assignment(s_key_pressed);              break;
+    case GLFW_KEY_D: key_action_assignment(d_key_pressed);              break;
+    case GLFW_KEY_E: key_action_assignment(e_key_pressed);              break;
+    case GLFW_KEY_SPACE: key_action_assignment(spacebar_key_pressed);   break;
+    case GLFW_KEY_LEFT_SHIFT: key_action_assignment(shift_key_pressed); break;
+    default: break;
+    }
 }
 
 static void cursor_position_callback(GLFWwindow* window, double xpos, double ypos)
@@ -95,27 +101,6 @@ static void cursor_position_callback(GLFWwindow* window, double xpos, double ypo
     last_ypos = ypos;
 }
 
-void initBuffers(Camera* camera)
-{
-    h_textureBufData = new uchar4[(size_t)WINDOW_HEIGHT * WINDOW_WIDTH];
-
-    glEnable(GL_TEXTURE_2D);
-    glGenTextures(1, &gl_texturePtr);
-    glBindTexture(GL_TEXTURE_2D, gl_texturePtr);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, WINDOW_WIDTH, WINDOW_HEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE, h_textureBufData);
-
-    glGenBuffers(1, &gl_pixelBufferObject);
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, gl_pixelBufferObject);
-    glBufferData(GL_PIXEL_UNPACK_BUFFER_ARB, (size_t)WINDOW_HEIGHT * WINDOW_WIDTH * sizeof(uchar4), h_textureBufData, GL_STREAM_COPY);
-
-    cudaGraphicsGLRegisterBuffer(&cgr, gl_pixelBufferObject, cudaGraphicsMapFlagsWriteDiscard);
-
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, 0);
-    glBindTexture(GL_TEXTURE_2D, 0);
-}
-
 void moveCamera(Scene& scene)
 {
     if (w_key_pressed)
@@ -126,22 +111,31 @@ void moveCamera(Scene& scene)
         scene.moveBackward();
     if (d_key_pressed)
         scene.moveRight();
+    if (spacebar_key_pressed)
+        scene.moveUp();
+    if (shift_key_pressed)
+        scene.moveDown();
 }
 
 void rotateCamera(Scene& scene)
 {
-    if (cursor_xpos_delta != 0.0 || cursor_ypos_delta != 0.0)
-        scene.rotateCamera(cursor_xpos_delta * cursor_horizontal_inversion,
-                           cursor_ypos_delta * cursor_vertical_inversion);
+    if (e_key_pressed)
+        scene.SmootheRotateRight();
+    else
+    {
+        if (cursor_xpos_delta != 0.0 || cursor_ypos_delta != 0.0)
+            scene.rotateCamera(cursor_xpos_delta * cursor_horizontal_inversion,
+                cursor_ypos_delta * cursor_vertical_inversion);
 
-    cursor_xpos_delta = 0.0;
-    cursor_ypos_delta = 0.0;
+        cursor_xpos_delta = 0.0;
+        cursor_ypos_delta = 0.0;
+    }
 }
 
 void UpdateFPS(GLFWwindow* window)
 {
     static const unsigned int WINDOW_UPDATE_INTERVAL = 4;
-    
+
     num_frames++;
     elapsed = std::chrono::system_clock::now() - last_time;
     last_time = std::chrono::system_clock::now();
@@ -162,17 +156,51 @@ void UpdateFPS(GLFWwindow* window)
 
 void BuildScene(Scene& scene)
 {
-    scene.AddRectangle(Color(100, 100, 100, 255), Vec3(-1000, 400, 1000), Vec3(1000, 400, 1000), Vec3(-1000, -400, 1000));          // Front wall
-    scene.AddRectangle(Color(100, 50, 50, 255), Vec3(-1000, -400, 1000), Vec3(1000, -400, 1000), Vec3(-1000, -400, -1000));       // Floor
-    scene.AddRectangle(Color(0, 0, 100, 255), Vec3(-1000, 400, 1000), Vec3(1000, 400, 1000), Vec3(-1000, 400, -1000), true);    // Ceiling
-    scene.AddRectangle(Color(100, 100, 100, 255), Vec3(-1000, 400, 1000), Vec3(-1000, 400, -1000), Vec3(-1000, -400, 1000), true);  // Left wall
-    scene.AddRectangle(Color(100, 100, 100, 255), Vec3(1000, 400, 1000), Vec3(1000, 400, -1000), Vec3(1000, -400, 1000));           // Right wall
+    //scene.AddRectangle(Color(100, 100, 100, 255), 0.0, Vec3(-1000, 400, 1000), Vec3(1000, 400, 1000), Vec3(-1000, -400, 1000));          // Front wall
+    scene.AddRectangle(Color(100, 100, 100, 255), false, Vec3(-1000, -400, 1000), Vec3(1000, -400, 1000), Vec3(-1000, -400, -1000));         // Floor
+    //scene.AddRectangle(Color(0, 0, 100, 255), 0.0, Vec3(-1000, 400, 1000), Vec3(1000, 400, 1000), Vec3(-1000, 400, -1000), true);        // Ceiling
+    //scene.AddRectangle(Color(100, 100, 100, 255), 0.0, Vec3(-1000, 400, 1000), Vec3(-1000, 400, -1000), Vec3(-1000, -400, 1000), true);  // Left wall
+    //scene.AddRectangle(Color(100, 100, 100, 255), 0.0, Vec3(1000, 400, 1000), Vec3(1000, 400, -1000), Vec3(1000, -400, 1000));           // Right wall
 
-    scene.AddSphere(Color(100, 0, 0, 255), Vec3(50, 20, 100), 10);
-    scene.AddSphere(Color(0, 100, 0, 255), Vec3(50, 70, 100), 20);
-    scene.AddSphere(Color(0, 0, 100, 255), Vec3(50, 120, 150), 30);
+
+    scene.AddSphere(Color(0, 0, 0, 255), true, Vec3(0, -300, 0), 100);
+
+
+    scene.AddSphere(Color(100, 0, 0, 255), false, Vec3(-150, -370, -150), 30);
+    scene.AddSphere(Color(100, 100, 0, 255), false, Vec3(150, -370, -150), 30);
+    scene.AddSphere(Color(100, 100, 100, 255), false, Vec3(-150, -370, 150), 30);
+    scene.AddSphere(Color(0, 100, 0, 255), false, Vec3(150, -370, 150), 30);
+
+    scene.AddSphere(Color(0, 100, 100, 255), false, Vec3(250, -370, 0), 30);
+    scene.AddSphere(Color(0, 0, 100, 255), false, Vec3(-250, -370, 0), 30);
+    scene.AddSphere(Color(80, 50, 150, 255), false, Vec3(0, -370, -250), 30);
+    scene.AddSphere(Color(80, 50, 150, 255), false, Vec3(0, -370, 250), 30);
 
     scene.AddLight({ -50.0, 50.0, 0.0 }, 1.5);
+
+    scene.LoadEntities();
+}
+
+void initBuffers(Camera* camera)
+{
+    void* data = malloc(WINDOW_HEIGHT * WINDOW_WIDTH * COLOR_DEPTH * sizeof(GLubyte));
+
+    glEnable(GL_TEXTURE_2D);
+    glGenTextures(1, &gl_texturePtr);
+    glBindTexture(GL_TEXTURE_2D, gl_texturePtr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, WINDOW_WIDTH, WINDOW_HEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+
+    glGenBuffers(1, &gl_pixelBufferObject);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, gl_pixelBufferObject);
+    glBufferData(GL_PIXEL_UNPACK_BUFFER_ARB, (size_t)WINDOW_HEIGHT * WINDOW_WIDTH * sizeof(uchar4), data, GL_DYNAMIC_DRAW);
+
+    free(data);
+    cudaGraphicsGLRegisterBuffer(&cgr, gl_pixelBufferObject, cudaGraphicsMapFlagsWriteDiscard);
+
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 void renderScene(Scene& scene)
@@ -224,6 +252,8 @@ int main(void)
     glfwMakeContextCurrent(window);
     glewInit();
 
+    glDisable(GL_DEPTH_TEST);
+
     /* Change cursor mode */
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
     if (glfwRawMouseMotionSupported())
@@ -240,10 +270,11 @@ int main(void)
 
     glfwSetCursorPos(window, WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2);
 
-    Scene scene(WINDOW_WIDTH, WINDOW_HEIGHT, 10, 10, 10, Color(100, 0, 0, 255));
+    Scene scene(WINDOW_WIDTH, WINDOW_HEIGHT, 10, 10, 10, Color(100, 180, 230, 255));
     BuildScene(scene);
 
     initBuffers(scene.camera);
+    CalcKernelBlockSize(scene.camera);
 
     last_time = std::chrono::system_clock::now();
 
@@ -251,9 +282,9 @@ int main(void)
     while (!glfwWindowShouldClose(window) && !quit_program)
     {
         /* Render here */
-        glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        renderScene(scene);        
+        renderScene(scene);
 
         /* Swap front and back buffers */
         glfwSwapBuffers(window);
@@ -265,8 +296,9 @@ int main(void)
 
         UpdateFPS(window);
     }
-
-    delete(h_textureBufData);
+    glDeleteTextures(1, &gl_texturePtr);
+    glDeleteBuffers(1, &gl_pixelBufferObject);
+    CleanUp();
     glfwTerminate();
     return 0;
 }

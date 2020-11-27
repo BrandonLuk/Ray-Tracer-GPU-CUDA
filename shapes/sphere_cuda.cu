@@ -9,16 +9,17 @@
 
 __device__ inline bool SphereRayIntersect(const Sphere& sphere, const Ray& ray, Vec3& intersection)
 {
-    double v = ray.direction.DotProduct(sphere.origin - ray.origin);
-    double discriminant = (sphere.radius * sphere.radius) - ((sphere.origin - ray.origin).DotProduct(sphere.origin - ray.origin) - (v * v));
+    float v = ray.direction.DotProduct(sphere.origin - ray.origin);
+    //float discriminant = (sphere.radius * sphere.radius) - ((sphere.origin - ray.origin).DotProduct(sphere.origin - ray.origin) - (v * v));
+    float discriminant = __fmaf_rn(sphere.radius, sphere.radius, -((sphere.origin - ray.origin).DotProduct(sphere.origin - ray.origin) - (v * v)));
 
     // There are no intersections
     if (discriminant < 0.0)
         return false;
     else
     {
-        double distance = sqrt(discriminant);
-        double t_param = v - distance;
+        float distance = __fsqrt_rn(discriminant);
+        float t_param = v - distance;
 
         // If the t_param is negative, the intersection is "behind" the ray. For our purpose we throw this out and return false
         if (t_param < 0.0)
@@ -48,7 +49,7 @@ __device__ inline Ray SphereReflectedRay(const Sphere& sphere, const Ray& incomi
 
     Ray normal = SphereNormalAtPoint(sphere, intersection);
 
-    double theta = -1 * normal.direction.DotProduct(incoming_ray.direction);
+    float theta = -1 * normal.direction.DotProduct(incoming_ray.direction);
     reflected_ray.direction = incoming_ray.direction + (2 * theta * normal.direction);
     reflected_ray.direction = reflected_ray.direction.Normalize();
 

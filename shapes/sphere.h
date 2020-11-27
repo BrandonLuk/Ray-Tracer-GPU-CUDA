@@ -8,9 +8,9 @@
 struct Sphere
 {
 	Color color;
-	double radius;
-    Vec3 origin;
+	bool reflective;
+	Vec3 origin;
+	float radius;
 
-	__device__ Sphere(Color _color, Vec3 _origin, double _radius) : color(_color), origin(_origin), radius(_radius) {}
+	__device__ Sphere(Color _color, bool _reflective, Vec3 _origin, float _radius) : color(_color), reflective(_reflective), radius(_radius), origin(_origin) {}
 };
-

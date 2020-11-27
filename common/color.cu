@@ -24,40 +24,20 @@ __device__ __host__ Color::operator uchar4() const
 
 __device__ __host__ Color Color::operator+(const Color& other)
 {
-	auto safe_add = [](const unsigned char& add1, const unsigned char& add2) ->unsigned char {
-		int res = add1 + add2;
-		if (res < 0)
-			return 0;
-		else if (res > COLOR_VALUE_MAX)
-			return static_cast<unsigned char>(COLOR_VALUE_MAX);
-		else
-			return static_cast<unsigned char>(res);
-	};
-
-	return { safe_add(data.x, other.data.x),
-			 safe_add(data.y, other.data.y),
-			 safe_add(data.z, other.data.z),
-			 safe_add(data.w, other.data.w) };
+	return { unsigned char(1U * data.x + other.data.x),
+			unsigned char(1U * data.y + other.data.y),
+			unsigned char(1U * data.z + other.data.z),
+			data.w };
 }
 
-__device__ __host__ Color operator*(const double& d, const Color& c)
+__device__ __host__ Color operator*(const float& d, const Color& c)
 {
-	auto safe_mul = [&d](const unsigned char& additive) -> unsigned char {
-		double res = additive * d;
-		if (res < 0)
-			return 0;
-		else if (res > COLOR_VALUE_MAX)
-			return static_cast<unsigned char>(COLOR_VALUE_MAX);
-		else
-			return static_cast<unsigned char>(res);
-	};
-
-	return { safe_mul(c.data.x),
-			 safe_mul(c.data.y),
-			 safe_mul(c.data.z),
-			 safe_mul(c.data.w) };
+	return { ((unsigned char)(1U * c.data.x * d)),
+			((unsigned char)(1U * c.data.y * d)),
+			((unsigned char)(1U * c.data.z * d)),
+			c.data.w };
 }
-__device__ __host__ Color operator*(const Color& c, const double& d)
+__device__ __host__ Color operator*(const Color& c, const float& d)
 {
 	return d * c;
 }

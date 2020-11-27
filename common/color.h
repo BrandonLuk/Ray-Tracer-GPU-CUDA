@@ -21,5 +21,5 @@ struct Color
 	__device__ __host__ Color operator+(const Color& other);
 };
 
-__device__ __host__ Color operator*(const double& d, const Color& c);
-__device__ __host__ Color operator*(const Color& c, const double& d);
+__device__ __host__ Color operator*(const float& d, const Color& c);
+__device__ __host__ Color operator*(const Color& c, const float& d);

@@ -17,8 +17,27 @@
 
 #include <stdio.h>
 
+constexpr int MAX_REFLECTION_DEPTH = 2;                 // How many reflections per ray
+constexpr float LIGHT_RAY_NUDGE = 0.005f;               // How much to nudge light ray origins so that they do not intersect with their own entities
+constexpr float REFLECTION_INTENSITY_RETENTION = 0.8f;  // How much color/light is retained after every reflection bounce
+
+// RayTrace_Kernel Occupancy
+int block_size;
+int min_grid_size;
+int grid_size;
+
+// Pointers to device side entity arrays
+Sphere* d_spheres;
+Rectangle* d_rectangles;
+Light* d_lights;
+
+__constant__ int d_spheres_cnt;
+__constant__ int d_rectangles_cnt;
+__constant__ int d_lights_cnt;
+
+
 struct CollisionRecord {
-    enum{SPHERE, RECTANGLE, NONE} Shape;
+    enum { SPHERE, RECTANGLE, NONE } collided_shape;
     int index;
 };
 
@@ -27,23 +46,21 @@ struct CollisionRecord {
 */
 __device__ CollisionRecord NearestIntersection(
     Sphere* spheres,
-    int spheres_cnt,
     Rectangle* rectangles,
-    int rectangles_cnt,
     Ray& ray,
     Vec3& intersection)
 {
-    double distance;
-    double temp_distance;
+    float distance;
+    float temp_distance;
     Vec3 temp_intersection;
 
-    CollisionRecord col{ col.NONE, 0 };
-    distance = DBL_MAX; // Start with an impossibly large distance to compare with
-    
+    CollisionRecord col{ CollisionRecord::NONE, 0 };
+    distance = FLT_MAX; // Start with an impossibly large distance to compare with
+
     // Go through all entities in the scene
-    for (int i = 0; i < spheres_cnt; ++i)
+    for (int i = 0; i < d_spheres_cnt; ++i)
     {
-        // If this entity is not flagged to be ignored, and the ray has intersected it
+        // Check if the ray intersects this sphere
         if (SphereRayIntersect(spheres[i], ray, temp_intersection))
         {
             // Check if this intersection is closer than one we have already found
@@ -54,15 +71,15 @@ __device__ CollisionRecord NearestIntersection(
             {
                 intersection = temp_intersection;
                 distance = temp_distance;
-                col.Shape = col.SPHERE;
+                col.collided_shape = CollisionRecord::SPHERE;
                 col.index = i;
             }
         }
     }
 
-    for (int i = 0; i < rectangles_cnt; ++i)
+    for (int i = 0; i < d_rectangles_cnt; ++i)
     {
-        // If this entity is not flagged to be ignored, and the ray has intersected it
+        // Check if the ray intersects this rectangle
         if (RectangleRayIntersect(rectangles[i], ray, temp_intersection))
         {
             // Check if this intersection is closer than one we have already found
@@ -73,12 +90,12 @@ __device__ CollisionRecord NearestIntersection(
             {
                 intersection = temp_intersection;
                 distance = temp_distance;
-                col.Shape = col.RECTANGLE;
+                col.collided_shape = CollisionRecord::RECTANGLE;
                 col.index = i;
             }
         }
     }
-    
+
 
     return col;
 }
@@ -86,38 +103,35 @@ __device__ CollisionRecord NearestIntersection(
 /*
     Find the lighting value at a point.
 */
-__device__ double RayLight(
+__device__ float RayLight(
     Sphere* spheres,
-    int spheres_cnt,
     Rectangle* rectangles,
-    int rectangles_cnt,
     Light* lights,
-    int lights_cnt,
     Vec3 incidence,
     Ray normal_at_incident)
 {
-    double light_additive = 0.0;
+    float light_additive = 0.0f;
 
     Ray light_ray;
     Vec3 intersection;
-    double surface_angle_from_light;
+    float surface_angle_from_light;
 
     // Slightly exaggerate the origin of the light ray, so that it does not intersect with the entity we are trying to find the light value for.
-    light_ray.origin = incidence * 0.05;
+    light_ray.origin = incidence + (normal_at_incident.direction * LIGHT_RAY_NUDGE);
 
     // Check each light to see if there is an uninterrupted path between it and the entity
-    for (int i = 0; i < lights_cnt; ++i)
+    for (int i = 0; i < d_lights_cnt; ++i)
     {
         light_ray.direction = lights[i].origin - incidence;
         light_ray.direction = light_ray.direction.Normalize();
 
 
         // If the light_ray intersects some entity
-        CollisionRecord rec = NearestIntersection(spheres, spheres_cnt, rectangles, rectangles_cnt, light_ray, intersection);
-        if (rec.Shape != rec.NONE && light_ray.origin.Distance(intersection) < light_ray.origin.Distance(lights[i].origin))
+        CollisionRecord rec = NearestIntersection(spheres, rectangles, light_ray, intersection);
+        if (rec.collided_shape != CollisionRecord::NONE && light_ray.origin.Distance(intersection) < light_ray.origin.Distance(lights[i].origin))
             continue;
         surface_angle_from_light = light_ray.direction.DotProduct(normal_at_incident.direction);
-        if (surface_angle_from_light > 0.0)
+        if (surface_angle_from_light > 0.0f)
             light_additive += lights[i].intensity * surface_angle_from_light;
     }
 
@@ -129,72 +143,72 @@ __device__ double RayLight(
 */
 __device__
 Color RayColor(
-    Color& bg_color,
+    const Color& bg_color,
     Sphere* spheres,
-    int spheres_cnt,
     Rectangle* rectangles,
-    int rectangles_cnt,
     Light* lights,
-    int lights_cnt,
-    Ray& r)
+    Ray r)
 {
     Color c(bg_color);
     Vec3 intersection;
     Ray normal_at_intersection;
     CollisionRecord rec;
 
-    // If an entity was intersected by the ray
-    rec = NearestIntersection(spheres, spheres_cnt, rectangles, rectangles_cnt, r, intersection);
-    if (rec.Shape != rec.NONE)
+    float light_retention = 1.0f;
+
+    for (int i = 0; i < MAX_REFLECTION_DEPTH; ++i)
     {
-        if (rec.Shape == rec.SPHERE)
+        rec = NearestIntersection(spheres, rectangles, r, intersection);
+
+        if (rec.collided_shape == CollisionRecord::SPHERE)
         {
-            c = spheres[rec.index].color;
-            normal_at_intersection = SphereNormalAtPoint(spheres[rec.index], intersection);
+            // If this sphere is not reflective or if we have reached the max reflection depth then just return this sphere's color
+            if (!spheres[rec.index].reflective || i == MAX_REFLECTION_DEPTH - 1)
+            {
+                normal_at_intersection = SphereNormalAtPoint(spheres[rec.index], intersection);
+                return light_retention * spheres[rec.index].color * RayLight(spheres, rectangles, lights, intersection, normal_at_intersection);
+            }
+            // Else we have hit a reflective sphere and are not at the max reflection depth, so reflect the incoming ray and make another pass
+            else
+            {
+                r = SphereReflectedRay(spheres[rec.index], r, intersection);
+                light_retention *= REFLECTION_INTENSITY_RETENTION;
+            }
+        }
+        else if (rec.collided_shape == CollisionRecord::RECTANGLE)
+        {
+            if (!rectangles[rec.index].reflective || i == MAX_REFLECTION_DEPTH - 1)
+            {
+                normal_at_intersection = RectangleNormalAtPoint(rectangles[rec.index], intersection);
+                return light_retention * rectangles[rec.index].color * RayLight(spheres, rectangles, lights, intersection, normal_at_intersection);
+            }
+            else
+            {
+                r = RectangleReflectedRay(rectangles[rec.index], r, intersection);
+                light_retention *= REFLECTION_INTENSITY_RETENTION;
+            }
         }
         else
         {
-            c = rectangles[rec.index].color;
-            normal_at_intersection = RectangleNormalAtPoint(rectangles[rec.index], intersection);
+            return c * light_retention;
         }
     }
-
-    //rather check to see if entity origin is above camra origin
-    double light_additive = RayLight(spheres, spheres_cnt, rectangles, rectangles_cnt, lights, lights_cnt, intersection, normal_at_intersection);
-
-    c = c * light_additive;
-
 
     return c;
 }
 
 __global__
-void RayTrace_Kernel_Thread(
+void RayTrace_Kernel(
     Camera* camera,
     Color bg_color,
     Sphere* spheres,
-    int spheres_cnt,
     Rectangle* rectangles,
-    int rectangles_cnt,
     Light* lights,
-    int lights_cnt,
     Vec3 top_left_pixel_center,
     Vec3 q_x,
     Vec3 q_y,
     uchar4* des)
 {
-
-
-    extern __shared__ Sphere shared_mem[];
-    Sphere* d_spheres = shared_mem;
-    Rectangle* d_rectangles = (Rectangle*)&d_spheres[spheres_cnt];
-
-    if (threadIdx.x < spheres_cnt)
-        d_spheres[threadIdx.x] = spheres[threadIdx.x];
-    else if (threadIdx.x < spheres_cnt + rectangles_cnt)
-        d_rectangles[threadIdx.x - spheres_cnt] = rectangles[threadIdx.x - spheres_cnt];
-    __syncthreads();
-
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
 
@@ -206,61 +220,49 @@ void RayTrace_Kernel_Thread(
     int num_pixels = camera->frame_width * camera->frame_height;
     for (int i = index; i < num_pixels; i += stride)
     {
-        
-        
+
+
         // Convert i, which represents the "flat index" of the pixel array into 2-D coordinates.
         x = i % camera->frame_width;
         y = i / camera->frame_width;
-        
+
 
         point = camera->origin + top_left_pixel_center + (q_x * x) - (q_y * y);
 
         ray.origin = camera->origin;
         ray.direction = point - camera->origin;
         ray.direction = ray.direction.Normalize();
-        
-        des[i] = RayColor(bg_color, d_spheres, spheres_cnt, d_rectangles, rectangles_cnt, lights, lights_cnt, ray);
+
+        des[i] = RayColor(bg_color, spheres, rectangles, lights, ray);
     }
 }
 
 void RayTrace(
     Camera* camera,
     Color bg_color,
-    Sphere* spheres,
-    int spheres_cnt,
-    Rectangle* rectangles,
-    int rectangles_cnt,
-    Light* lights,
-    int lights_cnt,
     uchar4* des)
 {
-    int blockSize = 256;
-    int numBlocks = ((camera->frame_width * camera->frame_height) + blockSize - 1) / blockSize;
-
-    Vec3 viewport_center = camera->origin + (camera->offset * camera->normal.Normalize());    // Center of our viewpower, given the current viewframe
+    Vec3 viewport_center = camera->origin + ((float)camera->offset * camera->normal.Normalize());    // Center of our viewpower, given the current viewframe
     Vec3 target_vec = viewport_center - camera->origin; // Direction of the ray pointing from the camera to the viewport center
     Vec3 b = camera->roll_component.CrossProduct(target_vec);   // Vector represeting the positive x direction when facing the viewport center from the camera
     Vec3 target_vec_normal = target_vec.Normalize();
     Vec3 b_normal = b.Normalize();
     Vec3 v_normal = target_vec_normal.CrossProduct(b_normal);   // Vector represeting the positive y direction when facing the viewport center from the camera
 
-    double g_x = camera->offset * tan(camera->FOV / 2);                 // Half the size of the viewport's width
-    double g_y = g_x * camera->frame_height / (double)camera->frame_width;    // Half the size of the viewport's height
+    float g_x = camera->offset * tan(camera->FOV / 2.0);                 // Half the size of the viewport's width
+    float g_y = g_x * camera->frame_height / (float)camera->frame_width;    // Half the size of the viewport's height
 
-    Vec3 q_x = (2 * g_x / (double)(camera->frame_width - 1)) * b_normal;   // Pixel shifting vector along the width
-    Vec3 q_y = (2 * g_y / (double)(camera->frame_height - 1)) * v_normal;  // Pixel shifting vector along the height
+    Vec3 q_x = (2 * g_x / (float)(camera->frame_width - 1)) * b_normal;   // Pixel shifting vector along the width
+    Vec3 q_y = (2 * g_y / (float)(camera->frame_height - 1)) * v_normal;  // Pixel shifting vector along the height
 
     Vec3 top_left_pixel_center = (target_vec_normal * camera->offset) - (g_x * b_normal) + (g_y * v_normal);
- 
-    RayTrace_Kernel_Thread << <numBlocks, blockSize, (spheres_cnt * sizeof(Sphere) + rectangles_cnt * sizeof(Rectangle))>> > (
+
+    RayTrace_Kernel << <grid_size, block_size >> > (
         camera,
         bg_color,
-        spheres,
-        spheres_cnt,
-        rectangles,
-        rectangles_cnt,
-        lights,
-        lights_cnt,
+        d_spheres,
+        d_rectangles,
+        d_lights,
         top_left_pixel_center,
         q_x,
         q_y,
@@ -269,4 +271,43 @@ void RayTrace(
 
     cudaErrorChk(cudaPeekAtLastError());
     cudaErrorChk(cudaDeviceSynchronize());
+}
+
+void CalcKernelBlockSize(Camera* camera)
+{
+    cudaOccupancyMaxPotentialBlockSize(
+        &min_grid_size,
+        &block_size,
+        (void*)RayTrace_Kernel,
+        0,
+        camera->frame_width * camera->frame_height
+    );
+    grid_size = (camera->frame_width * camera->frame_height + block_size - 1) / block_size;
+}
+
+void CpyEntitiesToDevice(
+    Sphere* spheres,
+    int spheres_cnt,
+    Rectangle* rectangles,
+    int rectangles_cnt,
+    Light* lights,
+    int lights_cnt)
+{
+    cudaMalloc(&d_spheres, spheres_cnt * sizeof(Sphere));
+    cudaMalloc(&d_rectangles, rectangles_cnt * sizeof(Rectangle));
+    cudaMalloc(&d_lights, lights_cnt * sizeof(Light));
+    cudaMemcpy(d_spheres, spheres, spheres_cnt * sizeof(Sphere), cudaMemcpyDefault);
+    cudaMemcpy(d_rectangles, rectangles, rectangles_cnt * sizeof(Rectangle), cudaMemcpyDefault);
+    cudaMemcpy(d_lights, lights, lights_cnt * sizeof(Light), cudaMemcpyDefault);
+
+    cudaMemcpyToSymbol(d_spheres_cnt, &spheres_cnt, sizeof(spheres_cnt));
+    cudaMemcpyToSymbol(d_rectangles_cnt, &rectangles_cnt, sizeof(rectangles_cnt));
+    cudaMemcpyToSymbol(d_lights_cnt, &lights_cnt, sizeof(lights_cnt));
+}
+
+void CleanUp()
+{
+    cudaErrorChk(cudaFree(d_spheres));
+    cudaErrorChk(cudaFree(d_rectangles));
+    cudaErrorChk(cudaFree(d_lights));
 }

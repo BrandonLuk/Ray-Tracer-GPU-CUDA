@@ -24,7 +24,7 @@ struct Camera {
 
     double FOV = 90.0 * M_PI / 180.0;
 
-    double speed = 5.0;
+    float speed = 5.0f;
 
     Camera(int _width, int _height) : frame_width{ _width }, frame_height{ _height } {}
 };

@@ -14,40 +14,33 @@ Scene::Scene(int frame_width, int frame_height, int numSpheres, int numRectangle
 	cudaErrorChk(cudaMallocManaged(&camera, sizeof(Camera)));
 	*camera = Camera(frame_width, frame_height);
 
-	cudaErrorChk(cudaMallocManaged(&spheres, numSpheres * sizeof(Sphere)));
-	cudaErrorChk(cudaMallocManaged(&rectangles, numRectangles * sizeof(Rectangle)));
-	cudaErrorChk(cudaMallocManaged(&lights,   num_lights * sizeof(Light)));
-
-	spheres_cnt = 0;
-	rectangles_cnt = 0;
-	lights_cnt = 0;
-
 	bg_color = _bg_color;
 }
 
 
 Scene::~Scene()
 {
-	cudaErrorChk(cudaFree(spheres));
-	cudaErrorChk(cudaFree(rectangles));
-	cudaErrorChk(cudaFree(lights));
+	cudaErrorChk(cudaFree(camera));
 }
 
-void Scene::AddLight(Vec3 origin, double intensity)
+void Scene::AddLight(Vec3 origin, float intensity)
 {
-	lights[lights_cnt++] = Light{ origin, intensity };
+	lights.push_back(Light{ origin, intensity });
 }
 
-void Scene::AddSphere(Color color, Vec3 origin, double radius)
+void Scene::AddSphere(Color color, bool reflective, Vec3 origin, float radius)
 {
-	spheres[spheres_cnt] = Sphere(color, origin, radius);
-	spheres_cnt += 1;
+	spheres.push_back(Sphere(color, reflective, origin, radius));
 }
 
-void Scene::AddRectangle(Color color, Vec3 a, Vec3 b, Vec3 c, bool flipped)
+void Scene::AddRectangle(Color color, bool reflective, Vec3 a, Vec3 b, Vec3 c, bool flipped)
 {
-	rectangles[rectangles_cnt] = Rectangle(color, a, b, c, flipped);
-	rectangles_cnt += 1;
+	rectangles.push_back(Rectangle(color, reflective, a, b, c, flipped));
+}
+
+void Scene::LoadEntities()
+{
+	CpyEntitiesToDevice(spheres.data(), spheres.size(), rectangles.data(), rectangles.size(), lights.data(), lights.size());
 }
 
 void Scene::moveForward()
@@ -70,6 +63,16 @@ void Scene::moveRight()
 	camera->origin -= camera->normal.CrossProduct(camera->roll_component).Normalize() * camera->speed;
 }
 
+void Scene::moveUp()
+{
+	camera->origin += camera->roll_component * camera->speed;
+}
+
+void Scene::moveDown()
+{
+	camera->origin -= camera->roll_component * camera->speed;
+}
+
 void Scene::rotateCamera(double xpos_delta, double ypos_delta)
 {
 	camera->yaw += xpos_delta * CAMERA_SENSITIVITY;
@@ -89,7 +92,20 @@ void Scene::rotateCamera(double xpos_delta, double ypos_delta)
 	camera->normal = camera->normal.Normalize();
 }
 
+void Scene::SmootheRotateRight()
+{
+	camera->yaw -= CAMERA_SENSITIVITY;
+
+	double yaw_rads = camera->yaw * M_PI / 180.0;
+	double pitch_rads = camera->pitch * M_PI / 180.0;
+
+	camera->normal.x = cos(yaw_rads) * cos(pitch_rads);
+	camera->normal.y = sin(pitch_rads);
+	camera->normal.z = sin(yaw_rads) * cos(pitch_rads);
+	camera->normal = camera->normal.Normalize();
+}
+
 void Scene::Render(uchar4* des)
 {
-	RayTrace(camera, bg_color, spheres, spheres_cnt, rectangles, rectangles_cnt, lights, lights_cnt, des);
+	RayTrace(camera, bg_color, des);
 }
